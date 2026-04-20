@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>Sandbox</title>
+
+<style>
+body { margin:0; overflow:hidden; background:#87ceeb; font-family:Arial; }
+
+#world { position:absolute; width:8000px; }
+
+.block,.ghost{
+  width:30px;height:30px;position:absolute;
+  border:1px solid rgba(0,0,0,0.2);
+  box-sizing:border-box;
+}
+
+.ghost{ opacity:0.5; pointer-events:none; }
+
+#preview{
+  position:fixed; top:10px; right:10px;
+  width:50px; height:50px;
+  border:3px solid white;
+}
+
+#controlsHud{
+  position:fixed; bottom:15px; right:15px;
+  background:rgba(0,0,0,0.6);
+  color:white; padding:10px;
+  border-radius:10px;
+}
+
+#clearBtn{
+  position:fixed;
+  bottom:15px;
+  left:15px;
+  padding:12px;
+  background:red;
+  color:white;
+  border:none;
+  border-radius:10px;
+  cursor:pointer;
+}
+
+#inventory{
+  position:fixed; top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,0.6);
+  display:none;
+  justify-content:center;
+  align-items:center;
+}
+
+#invBox{
+  background:#8b5a2b;
+  padding:20px;
+  border-radius:10px;
+  display:flex;
+  gap:20px;
+}
+
+#categories{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  color:white;
+}
+
+.categoryName{
+  cursor:pointer;
+  padding:5px;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(6,50px);
+  gap:6px;
+}
+
+.slot{
+  width:50px;height:50px;
+  border:2px solid #3e1f0f;
+  cursor:pointer;
+}
+
+/* TOOLTIP */
+#tooltip{
+  position:fixed;
+  background:black;
+  color:white;
+  padding:5px;
+  font-size:12px;
+  border-radius:5px;
+  pointer-events:none;
+  display:none;
+  z-index:999;
+}
+</style>
+</head>
+
+<body>
+
+<div id="world"></div>
+<div id="preview"></div>
+
+<button id="clearBtn">Remover blocos</button>
+
+<div id="controlsHud">
+F: inventário<br>
+W/S: câmera<br>
+Click esquerdo: quebrar<br>
+Click direito: colocar<br>
+SHIFT + arrastar: linha
+</div>
+
+<div id="inventory">
+  <div id="invBox">
+    <div id="categories"></div>
+    <div id="items" class="grid"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const world=document.getElementById("world");
+const preview=document.getElementById("preview");
+const inventory=document.getElementById("inventory");
+const itemsDiv=document.getElementById("items");
+const categoriesDiv=document.getElementById("categories");
+const clearBtn=document.getElementById("clearBtn");
+const tooltip=document.getElementById("tooltip");
+
+let blocks=[],ghosts=[];
+let camY=0,keys={};
+let inventoryOpen=false;
+let mouseRight=false,mouseLeft=false,shift=false;
+
+const size=30;
+let startX=null,startY=null;
+
+/* ================= SAVE / LOAD ================= */
+
+function saveWorld(){
+  const data = blocks.map(b => ({
+    x: parseInt(b.style.left)/size,
+    y: parseInt(b.style.top)/size,
+    color: b.style.background,
+    fixed: b.fixed
+  }));
+  localStorage.setItem("sandbox_save", JSON.stringify(data));
+}
+
+function loadWorld(){
+  const data = JSON.parse(localStorage.getItem("sandbox_save"));
+  if(!data) return;
+
+  blocks.forEach(b => b.remove());
+  blocks = [];
+
+  data.forEach(d => {
+    let b=document.createElement("div");
+    b.className="block";
+    b.style.left=d.x*size+"px";
+    b.style.top=d.y*size+"px";
+    b.style.background=d.color;
+    b.fixed=d.fixed;
+
+    world.appendChild(b);
+    blocks.push(b);
+  });
+}
+
+/* salva ao fechar */
+window.addEventListener("beforeunload", saveWorld);
+
+/* carrega ao abrir */
+loadWorld();
+
+/* ================= CATEGORIAS ================= */
+
+const categories={
+  "cores":[
+    {name:"verde",style:"#2ecc71"},
+    {name:"vermelho",style:"#e74c3c"},
+    {name:"laranja",style:"#e67e22"},
+    {name:"amarelo",style:"#f1c40f"},
+    {name:"azul",style:"#3498db"},
+    {name:"branco",style:"#ffffff"}
+  ],
+  "natureza":[
+    {name:"neve",style:"radial-gradient(circle,#fff,#ddd)"},
+    {name:"abóbora",style:"orange"},
+    {name:"água",style:"rgba(0,0,200,0.8)"},
+    {name:"lava",style:"#ff3300"}
+  ],
+  "industrializado":[
+    {name:"madeira",style:"#8b5a2b"},
+    {name:"tijolo",style:"#b03a2e"}
+  ],
+  "metais":[
+    {name:"metal",style:"linear-gradient(135deg,#ccc,#777)"},
+    {name:"pedra",style:"#777"},
+    {name:"obsidiana",style:"#111"},
+    {name:"grade",style:"repeating-linear-gradient(90deg,#aaa 0 2px,transparent 2px 10px)"}
+  ]
+};
+
+let current=categories["cores"][0];
+preview.style.background=current.style;
+
+/* UI */
+for(let cat in categories){
+  let el=document.createElement("div");
+  el.className="categoryName";
+  el.innerText=cat;
+  el.onclick=()=>showItems(cat);
+  categoriesDiv.appendChild(el);
+}
+
+function showItems(cat){
+  itemsDiv.innerHTML="";
+
+  categories[cat].forEach(item=>{
+    let s=document.createElement("div");
+    s.className="slot";
+    s.style.background=item.style;
+
+    s.onmouseenter=()=>{
+      tooltip.innerText=item.name;
+      tooltip.style.display="block";
+    };
+
+    s.onmousemove=e=>{
+      tooltip.style.left=e.clientX+10+"px";
+      tooltip.style.top=e.clientY+10+"px";
+    };
+
+    s.onmouseleave=()=>{
+      tooltip.style.display="none";
+    };
+
+    s.onclick=()=>{
+      current=item;
+      preview.style.background=item.style;
+      inventory.style.display="none";
+      inventoryOpen=false;
+    };
+
+    itemsDiv.appendChild(s);
+  });
+}
+
+/* TECLADO */
+document.addEventListener("keydown",e=>{
+  if(e.key.toLowerCase()==="f"){
+    inventoryOpen=!inventoryOpen;
+    inventory.style.display=inventoryOpen?"flex":"none";
+  }
+
+  if(e.key==="Shift") shift=true;
+
+  if(!inventoryOpen) keys[e.key.toLowerCase()]=true;
+});
+
+document.addEventListener("keyup",e=>{
+  if(e.key==="Shift") shift=false;
+  keys[e.key.toLowerCase()]=false;
+});
+
+/* BLOCO */
+function colocar(x,y){
+  let b=document.createElement("div");
+  b.className="block";
+  b.style.left=x*size+"px";
+  b.style.top=y*size+"px";
+  b.style.background=current.style;
+  b.fixed=false;
+  world.appendChild(b);
+  blocks.push(b);
+}
+
+/* QUEBRAR */
+function quebrar(px,py){
+  blocks.forEach((b,i)=>{
+    let r=b.getBoundingClientRect();
+    if(px>r.left&&px<r.right&&py>r.top&&py<r.bottom){
+      if(!b.fixed){
+        b.remove();
+        blocks.splice(i,1);
+      }
+    }
+  });
+}
+
+/* LIMPAR */
+clearBtn.onclick=()=>{
+  blocks=blocks.filter(b=>{
+    if(!b.fixed){
+      b.remove();
+      return false;
+    }
+    return true;
+  });
+};
+
+/* LINHA */
+function limparGhost(){
+  ghosts.forEach(g=>g.remove());
+  ghosts=[];
+}
+
+function linha(x1,y1,x2,y2,ghost=false){
+  limparGhost();
+  let dx=x2-x1,dy=y2-y1;
+  let steps=Math.max(Math.abs(dx),Math.abs(dy));
+
+  for(let i=0;i<=steps;i++){
+    let x=Math.round(x1+dx*i/steps);
+    let y=Math.round(y1+dy*i/steps);
+
+    if(ghost){
+      let g=document.createElement("div");
+      g.className="ghost";
+      g.style.left=x*size+"px";
+      g.style.top=y*size+"px";
+      g.style.background=current.style;
+      world.appendChild(g);
+      ghosts.push(g);
+    }else{
+      colocar(x,y);
+    }
+  }
+}
+
+/* MOUSE */
+document.addEventListener("mousedown",e=>{
+  if(inventoryOpen) return;
+
+  let gx=Math.floor(e.clientX/size);
+  let gy=Math.floor((e.clientY+camY)/size);
+
+  if(e.button===2){
+    mouseRight=true;
+
+    if(shift){
+      startX=gx; startY=gy;
+    }else{
+      colocar(gx,gy);
+    }
+  }
+
+  if(e.button===0){
+    mouseLeft=true;
+    quebrar(e.clientX,e.clientY);
+  }
+});
+
+document.addEventListener("mouseup",e=>{
+  if(e.button===2){
+    if(shift&&startX!==null){
+      let gx=Math.floor(e.clientX/size);
+      let gy=Math.floor((e.clientY+camY)/size);
+
+      limparGhost();
+      linha(startX,startY,gx,gy,false);
+
+      startX=null; startY=null;
+    }
+    mouseRight=false;
+    limparGhost();
+  }
+
+  if(e.button===0) mouseLeft=false;
+});
+
+document.addEventListener("mousemove",e=>{
+  if(inventoryOpen) return;
+
+  if(mouseLeft) quebrar(e.clientX,e.clientY);
+
+  if(mouseRight && shift && startX!==null){
+    let gx=Math.floor(e.clientX/size);
+    let gy=Math.floor((e.clientY+camY)/size);
+    linha(startX,startY,gx,gy,true);
+  }
+
+  if(mouseRight && !shift){
+    let gx=Math.floor(e.clientX/size);
+    let gy=Math.floor((e.clientY+camY)/size);
+    colocar(gx,gy);
+  }
+});
+
+document.addEventListener("contextmenu",e=>e.preventDefault());
+
+/* CHÃO FIXO */
+for(let x=0;x<200;x++){
+  for(let y=3;y<60;y++){
+    let b=document.createElement("div");
+    b.className="block";
+    b.style.left=x*size+"px";
+    b.style.top=y*size+"px";
+
+    let shade=Math.floor(Math.random()*20);
+    b.style.background=`rgb(${46-shade},${204-shade},${113-shade})`;
+
+    b.fixed=true;
+
+    world.appendChild(b);
+    blocks.push(b);
+  }
+}
+
+/* CAMERA */
+function update(){
+  if(!inventoryOpen){
+    if(keys["w"]) camY-=5;
+    if(keys["s"]) camY+=5;
+  }
+  world.style.transform=`translateY(${-camY}px)`;
+  requestAnimationFrame(update);
+}
+update();
+</script>
+
+</body>
+</html>
