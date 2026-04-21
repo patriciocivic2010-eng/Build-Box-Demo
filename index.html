@@ -83,7 +83,6 @@ body { margin:0; overflow:hidden; background:#87ceeb; font-family:Arial; }
   cursor:pointer;
 }
 
-/* TOOLTIP */
 #tooltip{
   position:fixed;
   background:black;
@@ -142,39 +141,41 @@ let startX=null,startY=null;
 /* ================= SAVE / LOAD ================= */
 
 function saveWorld(){
-  const data = blocks.map(b => ({
-    x: parseInt(b.style.left)/size,
-    y: parseInt(b.style.top)/size,
-    color: b.style.background,
-    fixed: b.fixed
-  }));
+  const data = blocks
+    .filter(b => !b.fixed)
+    .map(b => ({
+      x: parseInt(b.style.left)/size,
+      y: parseInt(b.style.top)/size,
+      color: b.dataset.color
+    }));
+
   localStorage.setItem("sandbox_save", JSON.stringify(data));
 }
 
 function loadWorld(){
-  const data = JSON.parse(localStorage.getItem("sandbox_save"));
-  if(!data) return;
+  try{
+    const data = JSON.parse(localStorage.getItem("sandbox_save"));
+    if(!data) return;
 
-  blocks.forEach(b => b.remove());
-  blocks = [];
+    data.forEach(d=>{
+      let b=document.createElement("div");
+      b.className="block";
+      b.style.left=d.x*size+"px";
+      b.style.top=d.y*size+"px";
+      b.style.background=d.color;
 
-  data.forEach(d => {
-    let b=document.createElement("div");
-    b.className="block";
-    b.style.left=d.x*size+"px";
-    b.style.top=d.y*size+"px";
-    b.style.background=d.color;
-    b.fixed=d.fixed;
+      b.fixed=false;
+      b.dataset.color=d.color;
 
-    world.appendChild(b);
-    blocks.push(b);
-  });
+      world.appendChild(b);
+      blocks.push(b);
+    });
+  }catch(e){}
 }
 
-/* salva ao fechar */
+/* auto save */
+setInterval(saveWorld, 3000);
 window.addEventListener("beforeunload", saveWorld);
-
-/* carrega ao abrir */
 loadWorld();
 
 /* ================= CATEGORIAS ================= */
@@ -209,7 +210,6 @@ const categories={
 let current=categories["cores"][0];
 preview.style.background=current.style;
 
-/* UI */
 for(let cat in categories){
   let el=document.createElement("div");
   el.className="categoryName";
@@ -275,9 +275,14 @@ function colocar(x,y){
   b.style.left=x*size+"px";
   b.style.top=y*size+"px";
   b.style.background=current.style;
+
   b.fixed=false;
+  b.dataset.color=current.style;
+
   world.appendChild(b);
   blocks.push(b);
+
+  saveWorld();
 }
 
 /* QUEBRAR */
@@ -288,6 +293,7 @@ function quebrar(px,py){
       if(!b.fixed){
         b.remove();
         blocks.splice(i,1);
+        saveWorld();
       }
     }
   });
@@ -302,6 +308,8 @@ clearBtn.onclick=()=>{
     }
     return true;
   });
+
+  saveWorld();
 };
 
 /* LINHA */
@@ -367,6 +375,7 @@ document.addEventListener("mouseup",e=>{
 
       startX=null; startY=null;
     }
+
     mouseRight=false;
     limparGhost();
   }
@@ -394,7 +403,7 @@ document.addEventListener("mousemove",e=>{
 
 document.addEventListener("contextmenu",e=>e.preventDefault());
 
-/* CHÃO FIXO */
+/* CHÃO */
 for(let x=0;x<200;x++){
   for(let y=3;y<60;y++){
     let b=document.createElement("div");
